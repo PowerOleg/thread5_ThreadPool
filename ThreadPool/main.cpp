@@ -73,7 +73,7 @@ private:
 
 			{
 				std::unique_lock<std::mutex> lock(m_);
-				cv_.wait(lock, [this] {
+				cv_.wait(lock, [this] {//if predicate is false then this_thread sleeps
 					return !tasks_.empty() || shutdown_;
 					});
 
