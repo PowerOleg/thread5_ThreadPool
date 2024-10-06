@@ -9,12 +9,57 @@
 #include <exception>
 #include <stdexcept>
 
+
+template <class F>
+class Safe_queue
+{
+public:
+	Safe_queue()
+	{};
+
+	Safe_queue(const Safe_queue& safeQueue) : tasks_(safeQueue.tasks_), future_queue_{safeQueue.future_queue_}
+	{
+		if (&safe_queue_ == this)
+		{
+			throw std::invalid_argument("Invalid_argument: this object and the argument object are the same");
+		}
+	}
+
+
+	//template <class F>
+	/*std::future<void>*/void Submit(F && f)
+	{
+		std::future<void> fut;
+
+
+		{
+			std::unique_lock<std::mutex> lock(m_);
+			fut = tasks_.emplace(std::forward<F>(f)).get_future();
+			future_queue_.emplace(fut);
+		}
+		cv_.notify_one();
+		//return fut;
+		
+	}
+
+	void get_result()
+	{
+		future_queue_.front().get();
+	}
+
+private:
+	std::queue<std::future<void>> future_queue_;
+	std::queue<Task> tasks_;
+	std::mutex m_;
+	std::condition_variable cv_;
+};
+
 class ThreadPool
 {
 	using Task = std::packaged_task<void()>;
 
 public:
-	ThreadPool(size_t threads_count)
+	ThreadPool(size_t threads_count, Safe_queue<std::function<void()>> safe_queue_) : safe_queue{ safe_queue_ }
 	{
 		threads_.reserve(threads_count);
 		for (size_t i = 0; i < threads_count; i++)
@@ -28,27 +73,27 @@ public:
 		join();
 	}
 
-	template <class F>//template <typename F>
-	std::future<void> Submit(F&& f)
-	{
-		std::future<void> fut;
+	//template <class F>//template <typename F>
+	//std::future<void> Submit(F&& f)
+	//{
+	//	std::future<void> fut;
 
 
-		{
-			std::unique_lock<std::mutex> lock(m_);
-			fut = tasks_.emplace(std::forward<F>(f)).get_future();
-		}
-		cv_.notify_one();
-		return fut;
-	}
+	//	{
+	//		std::unique_lock<std::mutex> lock(m_);
+	//		fut = tasks_.emplace(std::forward<F>(f)).get_future();
+	//	}
+	//	cv_.notify_one();
+	//	return fut;
+	//}
 
 	void shutdown()
 	{
 		{
-			std::unique_lock<std::mutex> lock(m_);
+			std::unique_lock<std::mutex> lock(m);
 			shutdown_ = true;
 		}
-		cv_.notify_all();
+		cv.notify_all();
 	}
 
 
@@ -72,8 +117,8 @@ private:
 
 
 			{
-				std::unique_lock<std::mutex> lock(m_);
-				cv_.wait(lock, [this] {
+				std::unique_lock<std::mutex> lock(m);
+				cv.wait(lock, [this] {
 					return !tasks_.empty() || shutdown_;
 					});
 
@@ -92,7 +137,7 @@ private:
 
 			if (shutdown_)
 			{
-			std::unique_lock<std::mutex> lock(m_);
+			std::unique_lock<std::mutex> lock(m);
 				if (tasks_.empty())
 				{
 					break;
@@ -103,38 +148,37 @@ private:
 
 	private:
 		std::vector<std::thread> threads_;
-		std::queue<Task> tasks_;
+		Safe_queue<std::function<void()>> safe_queue;
+		//std::queue<Task> tasks_;
 
-		std::mutex m_;
-		std::condition_variable cv_;
+		std::mutex m;
+		std::condition_variable cv;
 		bool shutdown_ = false;
 };
 
 
 
-
+//сделать: оператор копирования/перемезщения, конструктор перемещения у queue
 int main(int argc, char** argv)//we have 4 threads what stands for number of computer cores and tasks in 
 {
 	unsigned int cores_quantity = std::thread::hardware_concurrency();
-	ThreadPool tp(cores_quantity);
-
-	std::vector<std::future<void>> futures;
+	Safe_queue<std::function<void()>/*std::packaged_task<void()>*/> safe_queue;
+	ThreadPool tp(cores_quantity, safe_queue);
 
 	for (size_t i = 1; i > 0 ; --i)
 	{
-		futures.push_back(tp.Submit(
-			[i] {//this is a task which is a function to do
-				std::cout << i << std::endl;
-				std::this_thread::sleep_for(std::chrono::milliseconds((i % 3) * 100));
-			}
-		
-		
-		));
+		auto lambda = [i] {//this is a task
+			std::cout << i << std::endl;
+			std::this_thread::sleep_for(std::chrono::milliseconds((i % 3) * 100));
+			};
+		std::function<void()/*int(int)*/> function(lambda);
+		safe_queue.Submit(std::move(function));
+
 	}
 
-	for (auto& f : futures)//here we get result from tasks
+	for (size_t i = 0; i < 1; i++)
 	{
-		f.get();
+		safe_queue.get_result();
 	}
 
 	return 0;
