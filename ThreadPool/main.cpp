@@ -19,7 +19,7 @@ public:
 		threads_.reserve(threads_count);
 		for (size_t i = 0; i < threads_count; i++)
 		{
-			threads_.emplace_back(&ThreadPool::loop, this);
+			threads_.emplace_back(&ThreadPool::work, this);//second argument?
 		}
 	}
 
@@ -63,7 +63,7 @@ private:
 	}
 
 private:
-	void loop()
+	void work()//loop()//here is the main idea of pool of tasks
 	{
 		while (true)
 		{
@@ -73,7 +73,9 @@ private:
 
 			{
 				std::unique_lock<std::mutex> lock(m_);
-				cv_.wait(lock, [this] { return !tasks_.empty() || shutdown_; });
+				cv_.wait(lock, [this] {
+					return !tasks_.empty() || shutdown_;
+					});
 
 				if (!tasks_.empty())
 				{
@@ -111,16 +113,17 @@ private:
 
 
 
-int main(int argc, char** argv)
+int main(int argc, char** argv)//we have 4 threads what stands for number of computer cores and tasks in 
 {
-	ThreadPool tp(10);
+	unsigned int cores_quantity = std::thread::hardware_concurrency();
+	ThreadPool tp(cores_quantity);
 
 	std::vector<std::future<void>> futures;
 
-	for (size_t i = 100; i > 0 ; --i)
+	for (size_t i = 1; i > 0 ; --i)
 	{
 		futures.push_back(tp.Submit(
-			[i] {
+			[i] {//this is a task which is a function to do
 				std::cout << i << std::endl;
 				std::this_thread::sleep_for(std::chrono::milliseconds((i % 3) * 100));
 			}
@@ -129,7 +132,7 @@ int main(int argc, char** argv)
 		));
 	}
 
-	for (auto& f : futures)
+	for (auto& f : futures)//here we get result from tasks
 	{
 		f.get();
 	}
